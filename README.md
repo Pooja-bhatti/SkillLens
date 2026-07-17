@@ -1,4 +1,4 @@
-# InterviewIQ — Adaptive AI Competency Assessment Platform
+# SkillLens — Adaptive AI Competency Assessment Platform
 
 > An algorithm-driven mock interview system for Software Engineering candidates.  
 > The LLM only **phrases questions**. Every decision about *what to ask*, *how hard*, and *when to stop* is made by deterministic algorithms.
