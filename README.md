@@ -45,12 +45,12 @@ The following modules are **fully implemented and working**:
 | LLM Answer Scoring | ✅ Done (basic) | LLM scores each answer (0-10) for confidence, communication, correctness |
 | MongoDB Persistence | ✅ Done | All interviews, questions, answers, scores stored in Atlas |
 
-### What the current model does NOT do:
-- ❌ No Competency Graph (flat score only, no topic tracking)
-- ❌ No FSM strategy transitions (static difficulty 1→5)
-- ❌ No semantic embeddings (LLM grades answers, not math)
-- ❌ No adaptive next-question generation (all 5 pregenerated)
-- ❌ No concept priority weighting (all topics equal)
+### 🚀 Recently Implemented Features (Now Active):
+- ✅ **Competency Graph Tracking**: Dynamically tracks mastery scores across specific topics instead of just a flat score.
+- ✅ **FSM Strategy Transitions**: Adaptive difficulty (EXPLORE → VERIFY → DEEP_DIVE).
+- ✅ **Semantic Embeddings**: Answers are graded using mathematical cosine similarity (Transformers.js) against expected key phrases.
+- ✅ **Adaptive Next-Question Generation**: Questions are generated one-by-one based on the candidate's previous answer and current FSM state.
+- ✅ **Concept Priority Weighting**: Projects and skills from the resume get higher priority during the interview.
 
 ---
 
@@ -220,16 +220,11 @@ The following modules are **fully implemented and working**:
 | Method | Endpoint | Auth | Description |
 |---|---|---|---|
 | POST | `/resume` | ✅ | Uploads PDF, extracts text, calls LLM to parse resume JSON |
-| POST | `/generate-questions` | ✅ | Generates 5 interview questions, creates interview in DB, deducts 50 credits |
-| POST | `/submit-answer` | ✅ | Saves candidate answer, calls LLM to score it (confidence, communication, correctness) |
-| POST | `/finish` | ✅ | Aggregates all scores, updates interview status to "completed", returns final report |
-
-### Planned Routes
-| Method | Endpoint | Auth | Description |
-|---|---|---|---|
+| POST | `/generate-questions` | ✅ | Generates initial interview state, creates interview in DB, deducts 50 credits |
 | POST | `/next-question` | ✅ | FSM + Concept Selector → calls LLM → returns 1 question + must_have[] |
-| POST | `/evaluate-answer` | ✅ | Transformers.js cosine similarity → returns mastery score |
-| GET | `/competency-graph/:interviewId` | ✅ | Returns full competency node tree for visualization |
+| POST | `/submit-answer` | ✅ | Saves candidate answer, evaluates via Transformers.js, updates Competency Graph |
+| POST | `/finish` | ✅ | Aggregates all scores, updates interview status to "completed", returns final report |
+| GET | `/history` | ✅ | Returns all past interviews and computes Subject-Wise overall competency scores |
 
 ---
 
