@@ -1,0 +1,126 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+@import "tailwindcss";
+
+/* ─── Premium Enterprise Warm obsidian Dark Design System ─────────────────── */
+@theme {
+  --color-bg-main: #141210;
+  --color-card-main: #1D1A17;
+  --color-bg-secondary: #27231F;
+  --color-text-primary: #FAF6EE;
+  --color-text-secondary: #A39E93;
+  --color-border-main: #332F2A;
+  --color-primary-accent: #D77054;
+  --color-secondary-accent: #D4B26F;
+  --color-brand-success: #8E9F71;
+  --color-brand-warning: #D98848;
+  --color-brand-error: #CA6453;
+}
+
+:root {
+  --bg-main: #141210;
+  --surface: #1D1A17;
+  --bg-secondary: #27231F;
+  --text-primary: #FAF6EE;
+  --text-secondary: #A39E93;
+  --border-main: #332F2A;
+  --primary-accent: #D77054;
+  --secondary-accent: #D4B26F;
+  --success: #8E9F71;
+  --warning: #D98848;
+  --error: #CA6453;
+}
+
+* {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  box-sizing: border-box;
+}
+
+body {
+  background-color: var(--bg-main);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ─── Premium UI Clean Utilities (Replacements for futuristic effects) ──── */
+.mesh-gradient-hero {
+  background-color: var(--bg-main);
+  background-image: 
+    radial-gradient(at 15% 15%, rgba(200, 169, 106, 0.05) 0px, transparent 50%),
+    radial-gradient(at 85% 85%, rgba(181, 101, 77, 0.04) 0px, transparent 50%);
+}
+
+.mesh-gradient-dark {
+  background-color: var(--bg-secondary);
+}
+
+.glass-card {
+  background-color: var(--surface);
+  border: 1px solid var(--border-main);
+  box-shadow: 0 4px 20px -2px rgba(43, 42, 40, 0.02), 0 2px 6px -1px rgba(43, 42, 40, 0.02);
+  border-radius: 16px;
+}
+
+.gradient-text {
+  color: var(--primary-accent);
+}
+
+.gradient-text-amber {
+  color: var(--secondary-accent);
+}
+
+/* Elegant border container that transitions smoothly */
+.gradient-border {
+  position: relative;
+  border-radius: 16px;
+  background-color: var(--surface);
+  border: 1px solid var(--border-main);
+  transition: all 0.2s ease-in-out;
+}
+.gradient-border:hover {
+  border-color: var(--primary-accent);
+  box-shadow: 0 4px 12px rgba(43, 42, 40, 0.03);
+}
+
+/* Primary Corporate Terracotta Button */
+.btn-primary {
+  background-color: var(--primary-accent);
+  color: #FFFFFF;
+  border: none;
+  font-weight: 500;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 2px 4px rgba(181, 101, 77, 0.15);
+}
+.btn-primary:hover:not(:disabled) {
+  background-color: #9F533C;
+  transform: translateY(-0.5px);
+  box-shadow: 0 4px 8px rgba(181, 101, 77, 0.2);
+}
+.btn-primary:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+/* Smooth micro-interaction transitions */
+.hover-subtle-lift {
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease;
+}
+.hover-subtle-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(43, 42, 40, 0.04);
+}
+
+/* ─── Scrollbar styling ───────────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-main);
+  border-radius: 99px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-secondary);
+}

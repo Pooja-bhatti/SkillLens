@@ -1,0 +1,14 @@
+# Dependencies
+node_modules/
+
+# Environment variables
+.env
+
+# Uploaded resumes (runtime files)
+public/uploads/
+
+# Logs
+*.log
+
+# Test scripts
+test_razorpay.js
