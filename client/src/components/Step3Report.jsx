@@ -23,9 +23,10 @@ function Step3Report({ report }) {
     correctness = 0,
     communication = 0,
     confidence = 0,
-    competencyNodes = [],
-    questionWiseScore = []
   } = report || {};
+
+  const competencyNodes = report?.competencyNodes || [];
+  const questionWiseScore = report?.questionWiseScore || [];
 
   // Accordion expands
   const [expandedIndex, setExpandedIndex] = useState(null);
