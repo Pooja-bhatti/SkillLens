@@ -64,6 +64,12 @@ function Step2Interview({ interviewData, onFinish }) {
 
   const recognitionRef = useRef(null);
   const timerRef       = useRef(null);
+  const inputTextRef   = useRef(inputText);
+  
+  useEffect(() => {
+    inputTextRef.current = inputText;
+  }, [inputText]);
+
   const currentQuestion = questions[currentIdx] || {};
 
   const defaultTimeLimit = isCoding ? 180 : isHR ? 120 : 60;
@@ -176,7 +182,7 @@ function Step2Interview({ interviewData, onFinish }) {
     try {
       const response = await axios.post(
         `${ServerUrl}/api/interview/submit-answer`,
-        { interviewId, questionIndex: currentIdx, answer: inputText.trim(), timeTaken },
+        { interviewId, questionIndex: currentIdx, answer: inputTextRef.current.trim(), timeTaken },
         { withCredentials: true }
       );
 

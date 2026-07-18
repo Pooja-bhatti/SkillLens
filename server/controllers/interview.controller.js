@@ -282,17 +282,6 @@ export const submitAnswer = async (req, res) => {
         if (!question) return res.status(404).json({ message: "Question not found" });
 
         // ── Handle empty or timed-out answers ──
-        if (!answer || answer.trim() === "") {
-            question.score = 0;
-            question.feedback = "You did not submit an answer.";
-            question.answer = "";
-            question.semanticScore = 0;
-            interview.totalQuestionsAsked += 1;
-            interview.markModified('questions');
-            await interview.save();
-            return res.json({ feedback: question.feedback, done: false, nextQuestion: null });
-        }
-
         if (timeTaken > question.timeLimit) {
             question.score = 0;
             question.feedback = "Time limit exceeded. Answer not evaluated.";
@@ -304,41 +293,58 @@ export const submitAnswer = async (req, res) => {
             return res.json({ feedback: question.feedback, done: false, nextQuestion: null });
         }
 
-        // ── MODULE 6: Semantic Evaluation (Transformers.js) ──
-        const mustHave = question.mustHave || [];
-        const semanticScore = await evaluateAnswer(answer.trim(), mustHave);
-        console.log(`[FSM] concept="${question.concept}" score=${semanticScore.toFixed(3)} fsmState="${question.fsmState}"`);
+        let semanticScore = 0;
+        let feedbackText = "No answer recorded. Moving on.";
+        let answerText = answer ? answer.trim() : "";
 
-        // ── LLM: Get human-readable feedback text (UX only — not used for grading) ──
-        let feedbackText = "Good effort. Keep building on your understanding.";
-        try {
-            const feedbackMessages = [
-                {
-                    role: "system",
-                    content: `You are a professional interviewer giving feedback.
+        if (!answerText) {
+            // No answer provided
+            answerText = "User did not provide an answer.";
+            question.answer = answerText;
+            question.fsmState = "MOVE_ON"; // Skip directly
+            question.feedback = feedbackText;
+            question.semanticScore = 0;
+            question.score = 0;
+            question.confidence = 0;
+            question.communication = 0;
+            question.correctness = 0;
+        } else {
+            // ── MODULE 6: Semantic Evaluation (Transformers.js) ──
+            const mustHave = question.mustHave || [];
+            semanticScore = await evaluateAnswer(answerText, mustHave);
+            console.log(`[FSM] concept="${question.concept}" score=${semanticScore.toFixed(3)} fsmState="${question.fsmState}"`);
+
+            // ── LLM: Get human-readable feedback text (UX only — not used for grading) ──
+            feedbackText = "Good effort. Keep building on your understanding.";
+            try {
+                const feedbackMessages = [
+                    {
+                        role: "system",
+                        content: `You are a professional interviewer giving feedback.
 Write exactly 1 sentence of natural feedback (10-15 words).
 Be specific to the answer. Sound human and professional.
 Return ONLY valid JSON: {"feedback": "your feedback here"}`
-                },
-                {
-                    role: "user",
-                    content: `Question: ${question.question}\nAnswer: ${answer}\nScore: ${Math.round(semanticScore * 10)}/10`
-                }
-            ];
-            const fbRaw = await askAi(feedbackMessages);
-            const fbParsed = JSON.parse(fbRaw.match(/\{[\s\S]*\}/)?.[0] || fbRaw);
-            feedbackText = fbParsed.feedback || feedbackText;
-        } catch { /* silently use default feedback */ }
+                    },
+                    {
+                        role: "user",
+                        content: `Question: ${question.question}\nAnswer: ${answerText}\nScore: ${Math.round(semanticScore * 10)}/10`
+                    }
+                ];
+                const fbRaw = await askAi(feedbackMessages);
+                const fbParsed = JSON.parse(fbRaw.match(/\{[\s\S]*\}/)?.[0] || fbRaw);
+                feedbackText = fbParsed.feedback || feedbackText;
+            } catch { /* silently use default feedback */ }
 
-        // ── Update question record ──
-        question.answer = answer;
-        question.semanticScore = semanticScore;
-        question.score = Math.round(semanticScore * 10); // [0-10] for display
-        question.feedback = feedbackText;
-        // Legacy sub-scores approximated from semantic score for backward compat with Step3Report
-        question.confidence = Math.round(semanticScore * 10);
-        question.communication = Math.min(10, Math.round((answer.trim().split(/\s+/).length / 25) * 10));
-        question.correctness = Math.round(semanticScore * 10);
+            // ── Update question record ──
+            question.answer = answerText;
+            question.semanticScore = semanticScore;
+            question.score = Math.round(semanticScore * 10); // [0-10] for display
+            question.feedback = feedbackText;
+            // Legacy sub-scores approximated from semantic score for backward compat with Step3Report
+            question.confidence = Math.round(semanticScore * 10);
+            question.communication = Math.min(10, Math.round((answerText.split(/\s+/).length / 25) * 10));
+            question.correctness = Math.round(semanticScore * 10);
+        }
 
         // ── MODULE 7: Update Competency Graph Node ──
         const conceptName = question.concept;
