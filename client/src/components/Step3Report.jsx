@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { motion, AnimatePresence } from "motion/react";
 import { 
   FaCheckCircle, FaChevronDown, FaChevronUp, FaPrint, FaChartBar, 
   FaBrain, FaArrowRight, FaUserCheck, FaFileAlt, FaCheck, FaTimes,
