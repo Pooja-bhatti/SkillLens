@@ -17,20 +17,26 @@ export function selectNextConcept(competencyNodes) {
 
     if (available.length === 0) return null;
 
-    // Find the highest weight among available nodes
-    const highestWeight = Math.max(...available.map(n => n.weight));
+    // We use a weighted random selection (lottery) so that core CS subjects (weight 1)
+    // still have a chance to be asked alongside resume projects (weight 3) and skills (weight 2).
+    // To encourage breadth, we reduce the chance of picking a topic that was already asked.
+    let totalWeight = 0;
+    const weightedNodes = available.map(node => {
+        // dynamicWeight = baseWeight / (questionsAsked + 1)
+        const dynamicWeight = node.weight / (node.questionsAsked + 1);
+        totalWeight += dynamicWeight;
+        return { node, dynamicWeight };
+    });
 
-    // Get all nodes in that top weight tier
-    const topTier = available.filter(n => n.weight === highestWeight);
+    let randomValue = Math.random() * totalWeight;
+    for (const item of weightedNodes) {
+        randomValue -= item.dynamicWeight;
+        if (randomValue <= 0) {
+            return item.node;
+        }
+    }
 
-    // Within the top tier, prefer nodes with fewer questions asked
-    // But add randomness among nodes with the same questionsAsked count
-    // so the interview never feels predictable
-    const minAsked = Math.min(...topTier.map(n => n.questionsAsked));
-    const leastAsked = topTier.filter(n => n.questionsAsked === minAsked);
-
-    // Random pick among the least-asked nodes in the top tier
-    return leastAsked[Math.floor(Math.random() * leastAsked.length)];
+    return weightedNodes[0].node;
 }
 
 /**
