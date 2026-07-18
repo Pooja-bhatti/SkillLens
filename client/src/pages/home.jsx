@@ -202,7 +202,7 @@ function Home() {
                         {interviews.filter(iv => iv.finalScore > 0).slice(0, 8).reverse().map((iv, idx) => {
                           const heightPct = Math.max(10, (iv.finalScore || 0) * 10)
                           return (
-                            <div key={iv._id} className="flex flex-col items-center gap-2 group cursor-pointer relative">
+                            <div key={iv._id} className="h-full flex flex-col justify-end items-center gap-2 group cursor-pointer relative">
                               <span className="opacity-0 group-hover:opacity-100 absolute -top-8 bg-text-primary text-bg-main text-[9px] px-2 py-0.5 rounded font-bold transition">
                                 {iv.finalScore?.toFixed(1)}
                               </span>
