@@ -485,7 +485,7 @@ function Step1SetUp({ onStart }) {
                   onClick={() => setWorkflowStep(5)}
                   className="flex items-center gap-2 bg-primary-accent text-white px-6 py-2.5 rounded-xl text-xs font-bold shadow-sm hover:opacity-95 transition cursor-pointer"
                 >
-                  Review Summary <BsArrowRight />
+                  Next <BsArrowRight />
                 </button>
               </div>
             </motion.div>
