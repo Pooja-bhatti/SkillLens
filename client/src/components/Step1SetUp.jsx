@@ -5,6 +5,7 @@ import {
   BsCheckCircleFill, BsGearFill, BsX, BsArrowRight, BsArrowLeft, 
   BsBriefcase, BsPersonWorkspace, BsFillRocketTakeoffFill
 } from "react-icons/bs"
+import { LiaCoinsSolid } from "react-icons/lia"
 import axios from 'axios'
 import { ServerUrl } from '../App'
 import { useDispatch, useSelector } from 'react-redux'
