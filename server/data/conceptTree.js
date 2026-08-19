@@ -6,7 +6,7 @@
 
 // ─── HR Behavioral Topics ────────────────────────────────────────────────────
 export const HR_CONCEPT_TREE = {
-    "Self & Background":     ["Tell me about yourself", "Career journey and motivation", "Greatest professional achievement", "Why this role and company"],
+    "Self & Background": ["Tell me about yourself", "Career journey and motivation", "Greatest professional achievement", "Why this role and company"],
     "Strengths & Weaknesses": ["Core strengths in the workplace", "Areas of improvement and self-awareness", "How you handle constructive feedback", "Learning from past mistakes"],
     "Teamwork & Collaboration": ["Working in a team environment", "Handling disagreement with a colleague", "Supporting a team member in difficulty", "Cross-functional collaboration"],
     "Leadership & Initiative": ["Taking initiative without being asked", "Leading a project or team", "Influencing without authority", "Motivating others around you"],
@@ -16,16 +16,16 @@ export const HR_CONCEPT_TREE = {
 
 // ─── Coding / DSA Topics ─────────────────────────────────────────────────────
 export const CODING_CONCEPT_TREE = {
-    "Arrays and Strings":          ["Two Sum and variants", "Sliding Window technique", "String reversal and anagram detection", "Prefix sums and subarray problems"],
-    "Linked Lists":                ["Reverse a linked list", "Detect and remove cycle", "Merge two sorted linked lists", "Find middle of linked list"],
-    "Trees and BST":               ["Binary tree traversals", "Height and diameter of tree", "Lowest common ancestor", "Validate BST"],
-    "Graphs":                      ["BFS and DFS traversal", "Detect cycle in directed graph", "Shortest path algorithms", "Number of islands problem"],
-    "Dynamic Programming":         ["Fibonacci and memoization", "0/1 Knapsack problem", "Longest common subsequence", "Coin change problem"],
-    "Stack and Queue":             ["Valid parentheses matching", "Next greater element", "Implement queue using stacks", "Min stack design"],
-    "Sorting and Searching":       ["Binary search variants", "Merge sort implementation", "Quick sort and pivot selection", "Search in rotated sorted array"],
-    "Recursion and Backtracking":  ["Permutations and combinations", "N-Queens problem", "Subset sum problem", "Word search in grid"],
-    "Hash Maps and Sets":          ["Two sum using hash map", "Group anagrams together", "Longest consecutive sequence", "Top K frequent elements"],
-    "Two Pointers":                ["Container with most water", "Three sum problem", "Remove duplicates from sorted array", "Palindrome check with two pointers"],
+    "Arrays and Strings": ["Two Sum and variants", "Sliding Window technique", "String reversal and anagram detection", "Prefix sums and subarray problems"],
+    "Linked Lists": ["Reverse a linked list", "Detect and remove cycle", "Merge two sorted linked lists", "Find middle of linked list"],
+    "Trees and BST": ["Binary tree traversals", "Height and diameter of tree", "Lowest common ancestor", "Validate BST"],
+    "Graphs": ["BFS and DFS traversal", "Detect cycle in directed graph", "Shortest path algorithms", "Number of islands problem"],
+    "Dynamic Programming": ["Fibonacci and memoization", "0/1 Knapsack problem", "Longest common subsequence", "Coin change problem"],
+    "Stack and Queue": ["Valid parentheses matching", "Next greater element", "Implement queue using stacks", "Min stack design"],
+    "Sorting and Searching": ["Binary search variants", "Merge sort implementation", "Quick sort and pivot selection", "Search in rotated sorted array"],
+    "Recursion and Backtracking": ["Permutations and combinations", "N-Queens problem", "Subset sum problem", "Word search in grid"],
+    "Hash Maps and Sets": ["Two sum using hash map", "Group anagrams together", "Longest consecutive sequence", "Top K frequent elements"],
+    "Two Pointers": ["Container with most water", "Three sum problem", "Remove duplicates from sorted array", "Palindrome check with two pointers"],
 };
 
 export const CSE_CONCEPT_TREE = {
@@ -237,7 +237,7 @@ export function buildCodingNodes() {
  * @param {string[]} skills
  */
 export function buildNodesByMode(mode, projects = [], skills = []) {
-    if (mode === "HR")     return buildHRNodes();
+    if (mode === "HR") return buildHRNodes();
     if (mode === "Coding") return buildCodingNodes();
     return buildCompetencyNodes(projects, skills); // Technical (default)
 }

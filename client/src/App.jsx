@@ -10,7 +10,9 @@ import HistoryPage from './pages/HistoryPage'
 import PricingPage from './pages/PricingPage'
 import AuthGuard from './components/AuthGuard'
 
-export const ServerUrl = "https://skilllens-1h7f.onrender.com"
+export const ServerUrl = import.meta.env.MODE === 'development' 
+  ? "http://localhost:8000" 
+  : "https://skilllens-1h7f.onrender.com";
 
 function App() {
   const dispatch = useDispatch()

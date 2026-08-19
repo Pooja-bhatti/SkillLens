@@ -13,15 +13,29 @@
  * @param {Object[]} competencyNodes      - full competency node array from the interview
  * @returns {{ stop: boolean, reason: string }}
  */
-export function assessmentCompletion(totalQuestionsAsked, competencyNodes) {
-    // Rule 1: Hard minimum — always ask at least 5 questions
-    if (totalQuestionsAsked < 5) {
-        return { stop: false, reason: "Below minimum question count (5)" };
+export function assessmentCompletion(totalQuestionsAsked, competencyNodes, mode = "Technical") {
+    // For Coding mode, we ignore question counts and rely purely on concept exhaustion
+    if (mode === "Coding") {
+        const remaining = competencyNodes.filter(
+            n => n.fsmState !== "MOVE_ON" && n.questionsAsked < 3
+        );
+        if (remaining.length === 0) {
+            return { stop: true, reason: "Completed all 3 coding problems." };
+        }
+        return { stop: false, reason: "Continuing coding problems." };
     }
 
-    // Rule 2: Hard maximum — stop at 10 to prevent session fatigue
-    if (totalQuestionsAsked >= 10) {
-        return { stop: true, reason: "Maximum question limit reached (10)" };
+    const minQuestions = mode === "HR" ? 3 : 5;
+    const maxQuestions = mode === "HR" ? 5 : 10;
+
+    // Rule 1: Hard minimum
+    if (totalQuestionsAsked < minQuestions) {
+        return { stop: false, reason: `Below minimum question count (${minQuestions})` };
+    }
+
+    // Rule 2: Hard maximum — stop to prevent session fatigue
+    if (totalQuestionsAsked >= maxQuestions) {
+        return { stop: true, reason: `Maximum question limit reached (${maxQuestions})` };
     }
 
     // Rule 3: Adaptive early stop — all resume claim nodes (weight >= 2) have been touched

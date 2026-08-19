@@ -130,6 +130,20 @@ function Step3Report({ report }) {
         <div className="lg:col-span-4 bg-card-main border border-border-main rounded-2xl p-6 flex flex-col justify-between shadow-sm space-y-4">
           <h3 className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Grading metrics</h3>
           
+          {/* Large prominent overall score */}
+          <div className="flex flex-col items-center py-4 border-b border-border-main/50">
+            <div className={`text-5xl font-black ${finalScore >= 8 ? 'text-brand-success' : finalScore >= 5 ? 'text-brand-warning' : 'text-brand-error'}`}>
+              {finalScore}
+            </div>
+            <span className="text-text-secondary text-xs font-bold mt-1">out of 10</span>
+            <div className="w-full h-2.5 bg-bg-secondary rounded-full overflow-hidden border border-border-main mt-3">
+              <div 
+                className={`h-full rounded-full transition-all duration-700 ${finalScore >= 8 ? 'bg-brand-success' : finalScore >= 5 ? 'bg-brand-warning' : 'bg-brand-error'}`} 
+                style={{ width: `${finalScore * 10}%` }} 
+              />
+            </div>
+          </div>
+
           <div className="space-y-3.5">
             <div>
               <div className="flex justify-between text-xs mb-1 font-semibold">

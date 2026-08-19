@@ -3,8 +3,14 @@
 // The LLM is used ONLY for: (1) resume parsing, (2) question phrasing, (3) human feedback text.
 
 import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
 import { askAi } from "../services/openRouterservices.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const datasetPath = path.join(__dirname, "..", "data", "leetcodeDataset.json");
 import { evaluateAnswer } from "../services/embeddingService.js";
 import { getNextFSMState, getStateDifficulty, getStrategyDescription } from "../services/fsmEngine.js";
 import { selectNextConcept, updateCompetencyNode } from "../services/conceptSelector.js";
@@ -78,7 +84,7 @@ export const analyzResume = async (req, res) => {
 // HELPER: Generate ONE question + must_have[] from LLM for a given concept/state
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function generateOneQuestion(concept, fsmState, role, experience, resumeText, mode = "Technical") {
+async function generateOneQuestion(concept, fsmState, role, experience, resumeText, mode = "Technical", alreadyAskedQuestions = []) {
     let systemPrompt, userPrompt;
 
     // ── HR MODE: Behavioral / STAR questions ──────────────────────────────────
@@ -108,30 +114,88 @@ Rules:
 
     // ── CODING MODE: DSA / Algorithm problems ─────────────────────────────────
     } else if (mode === "Coding") {
-        const difficulty = getStateDifficulty(fsmState);
-        systemPrompt = "You are a technical interviewer testing algorithmic problem-solving. Return only valid JSON as instructed.";
-        userPrompt = `You are conducting a coding/DSA interview.
-
-Candidate:
-- Role Applied: ${role}
-- Experience: ${experience}
-
-Current Topic: ${concept}
-Difficulty: ${difficulty}
-
-Generate exactly 1 coding problem question on this topic.
-
+        if (fsmState === "DEEP_DIVE" || fsmState === "VERIFY") {
+            // Strictly Conceptual Follow-up
+            systemPrompt = "You are a technical interviewer assessing an algorithm the candidate just wrote. Return only valid JSON as instructed.";
+            userPrompt = `You are conducting a coding/DSA interview.
+The candidate just successfully solved a problem about: ${concept}.
+Generate 1 conceptual follow-up question (15-25 words) asking them how they might optimize time or space complexity, or asking about a specific edge case scenario. DO NOT ask them to write code.
 Return STRICT JSON only:
 {
-  "question": "Problem statement: clearly describe the problem in 20-40 words, include input/output format or example",
-  "must_have": ["correct algorithm or approach identified", "time complexity mentioned", "edge cases considered", "working logic or pseudocode explained"]
-}
-
-Rules:
-- The question must be a real algorithmic problem (not just theory)
-- Ask the candidate to explain their approach, not write full code
-- must_have describes what a strong verbal answer would cover
-- Output ONLY valid JSON, no markdown, no explanation`;
+  "question": "Your conceptual follow-up question?",
+  "must_have": ["key optimization 1", "key optimization 2"]
+}`;
+            const messages = [
+                { role: "system", content: systemPrompt },
+                { role: "user",   content: userPrompt  }
+            ];
+            const raw = await askAi(messages);
+            let parsed;
+            try {
+                parsed = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || raw);
+            } catch {
+                parsed = { question: "How would you optimize this solution further?", must_have: ["optimization"] };
+            }
+            return {
+                question: parsed.question || "How would you optimize this solution further?",
+                must_have: Array.isArray(parsed.must_have) ? parsed.must_have : [],
+                testCases: [], // Empty testCases flags it as a verbal follow-up
+                timeConstraint: null,
+                spaceConstraint: null,
+                variableConstraints: []
+            };
+        } else {
+            // Normal Coding Problem from Dataset
+        try {
+            const rawData = fs.readFileSync(datasetPath, 'utf-8');
+            const dataset = JSON.parse(rawData);
+            
+            // Map concept tree domain names to dataset concept names
+            const conceptMapping = {
+                "Arrays and Strings": ["Array", "String", "Math"],
+                "Linked Lists": ["Linked List"],
+                "Trees and BST": ["Tree", "Binary Search"],
+                "Graphs": ["Depth-First Search", "Breadth-First Search", "Union-Find"],
+                "Dynamic Programming": ["Dynamic Programming"],
+                "Stack and Queue": ["Stack", "Design"],
+                "Sorting and Searching": ["Binary Search", "Divide and Conquer"],
+                "Recursion and Backtracking": ["Backtracking"],
+                "Hash Maps and Sets": ["Hash Table"],
+                "Two Pointers": ["Two Pointers"],
+            };
+            
+            // Get all matching dataset concept names for this tree domain
+            const datasetConcepts = conceptMapping[concept] || [concept];
+            
+            let filtered = dataset.filter(q => 
+                datasetConcepts.some(dc => dc.toLowerCase() === q.concept.toLowerCase())
+            );
+            if (filtered.length === 0) filtered = dataset; // Fallback if concept not in dataset
+            
+            // Exclude already-asked questions to prevent repetition
+            if (alreadyAskedQuestions && alreadyAskedQuestions.length > 0) {
+                const notAsked = filtered.filter(q => 
+                    !alreadyAskedQuestions.some(asked => asked === q.question)
+                );
+                if (notAsked.length > 0) filtered = notAsked;
+                // If all questions for this concept have been asked, fall back to full filtered set
+            }
+            
+            const randomQ = filtered[Math.floor(Math.random() * filtered.length)];
+            
+            return {
+                question: randomQ.question,
+                must_have: randomQ.must_have || [],
+                testCases: randomQ.testCases || [],
+                timeConstraint: randomQ.timeConstraint || 2000,
+                spaceConstraint: randomQ.spaceConstraint || 256,
+                variableConstraints: randomQ.variableConstraints || []
+            };
+        } catch (e) {
+            console.error("Error reading leetcodeDataset:", e);
+            throw new Error("Failed to load coding questions database.");
+        }
+    }
 
     // ── TECHNICAL MODE: CS concepts / System design ───────────────────────────
     } else {
@@ -187,7 +251,11 @@ Rules:
 
     return {
         question: parsed.question || "Can you explain this concept in more detail?",
-        must_have: Array.isArray(parsed.must_have) ? parsed.must_have : []
+        must_have: Array.isArray(parsed.must_have) ? parsed.must_have : [],
+        testCases: Array.isArray(parsed.testCases) ? parsed.testCases : [],
+        timeConstraint: null,
+        spaceConstraint: null,
+        variableConstraints: []
     };
 }
 
@@ -227,7 +295,7 @@ export const generateQuestion = async (req, res) => {
         }
 
         // MODULE 5: Generate first question (LLM phrasing only — mode-aware)
-        const { question, must_have } = await generateOneQuestion(
+        const firstQ = await generateOneQuestion(
             firstNode.concept, firstNode.fsmState, role, experience, safeResume, mode
         );
 
@@ -244,12 +312,16 @@ export const generateQuestion = async (req, res) => {
             competencyNodes,
             totalQuestionsAsked: 0,
             questions: [{
-                question,
+                question: firstQ.question,
                 concept: firstNode.concept,
                 fsmState: firstNode.fsmState,
                 difficulty: firstNode.fsmState === "EXPLORE" ? "easy" : "medium",
-                timeLimit: 60,
-                mustHave: must_have
+                timeLimit: mode === "Coding" ? 180 : 60,
+                mustHave: firstQ.must_have,
+                testCases: firstQ.testCases,
+                timeConstraint: firstQ.timeConstraint,
+                spaceConstraint: firstQ.spaceConstraint,
+                variableConstraints: firstQ.variableConstraints
             }]
         });
 
@@ -308,8 +380,42 @@ export const submitAnswer = async (req, res) => {
             question.confidence = 0;
             question.communication = 0;
             question.correctness = 0;
+
+        // ── CODING MODE (Code questions): Test-case-based scoring (bypasses semantic evaluation) ──
+        } else if (interview.mode === "Coding" && question.testCases && question.testCases.length > 0) {
+            const { testResults } = req.body; // { passedCount, totalTests, allPassed, results[] }
+            if (testResults && testResults.totalTests > 0) {
+                semanticScore = testResults.passedCount / testResults.totalTests; // e.g. 4/5 = 0.8
+            } else {
+                semanticScore = 0; // No test results submitted
+            }
+            console.log(`[CODING] concept="${question.concept}" passed=${testResults?.passedCount || 0}/${testResults?.totalTests || 0} score=${semanticScore.toFixed(3)}`);
+
+            // Programmatic feedback based on test results
+            const passed = testResults?.passedCount || 0;
+            const total = testResults?.totalTests || 0;
+            if (semanticScore === 1) {
+                feedbackText = `All ${total} test cases passed. Excellent solution!`;
+            } else if (semanticScore >= 0.6) {
+                const failedTests = testResults?.results?.filter(r => !r.passed).map(r => `Test ${r.testCase}: ${r.status}`).join(', ') || '';
+                feedbackText = `Code passed ${passed}/${total} test cases. Failed: ${failedTests}`;
+            } else if (semanticScore > 0) {
+                feedbackText = `Code passed only ${passed}/${total} test cases. Review edge cases and boundary conditions.`;
+            } else {
+                feedbackText = `No test cases passed (0/${total}). Check your logic and ensure correct stdin/stdout handling.`;
+            }
+
+            // Update question record
+            question.answer = answerText;
+            question.semanticScore = semanticScore;
+            question.score = Math.round(semanticScore * 10); // [0-10]
+            question.feedback = feedbackText;
+            question.confidence = Math.round(semanticScore * 10);
+            question.communication = Math.min(10, Math.round((answerText.split(/\s+/).length / 25) * 10));
+            question.correctness = Math.round(semanticScore * 10);
+
         } else {
-            // ── MODULE 6: Semantic Evaluation (Transformers.js) ──
+            // ── MODULE 6: Semantic Evaluation (Transformers.js) — Technical & HR modes ──
             const mustHave = question.mustHave || [];
             semanticScore = await evaluateAnswer(answerText, mustHave);
             console.log(`[FSM] concept="${question.concept}" score=${semanticScore.toFixed(3)} fsmState="${question.fsmState}"`);
@@ -353,7 +459,24 @@ Return ONLY valid JSON: {"feedback": "your feedback here"}`
 
         if (nodeIndex !== -1) {
             const node = interview.competencyNodes[nodeIndex];
-            nextFsmState = getNextFSMState(node.fsmState, semanticScore);
+            
+            if (interview.mode === "Coding") {
+                // If it's a coding question, it has testCases. If it's a follow-up, it doesn't.
+                const isConceptualFollowUp = (!question.testCases || question.testCases.length === 0);
+                
+                if (isConceptualFollowUp) {
+                    nextFsmState = "MOVE_ON";
+                } else {
+                    if (semanticScore > 0 && semanticScore < 1.0) {
+                        nextFsmState = "VERIFY"; // Triggers conceptual verbal follow-up
+                    } else {
+                        nextFsmState = "MOVE_ON";
+                    }
+                }
+            } else {
+                nextFsmState = getNextFSMState(node.fsmState, semanticScore);
+            }
+            
             const evidenceStr = semanticScore >= 0.8
                 ? `✓ Answered "${conceptName}" correctly (${Math.round(semanticScore * 100)}%)`
                 : `✗ Struggled with "${conceptName}" (${Math.round(semanticScore * 100)}%)`;
@@ -365,7 +488,8 @@ Return ONLY valid JSON: {"feedback": "your feedback here"}`
         // ── MODULE 3 (Completion Check) → MODULE 4 (Next Concept) → MODULE 5 (Next Question) ──
         const { stop, reason } = assessmentCompletion(
             interview.totalQuestionsAsked,
-            interview.competencyNodes
+            interview.competencyNodes,
+            interview.mode
         );
 
         let nextQuestion = null;
@@ -383,25 +507,33 @@ Return ONLY valid JSON: {"feedback": "your feedback here"}`
             }
 
             if (targetNode) {
-                const { question: nextQ, must_have: nextMH } = await generateOneQuestion(
+                // Collect already-asked questions to prevent repetition
+                const alreadyAsked = interview.questions.map(q => q.question);
+                
+                const nextQ = await generateOneQuestion(
                     targetNode.concept,
                     targetNode.fsmState,
                     interview.role,
                     interview.experience,
                     interview.resumeText,
-                    interview.mode          // ← pass mode so HR/Coding/Technical stay consistent
+                    interview.mode,         // ← pass mode so HR/Coding/Technical stay consistent
+                    alreadyAsked            // ← prevent question repetition
                 );
 
                 const timeLimits = { EXPLORE: 60, VERIFY: 90, DEEP_DIVE: 120, CLARIFY: 60 };
                 const difficultyMap = { EXPLORE: "easy", VERIFY: "medium", DEEP_DIVE: "hard", CLARIFY: "easy" };
 
                 const newQuestionDoc = {
-                    question: nextQ,
+                    question: nextQ.question,
                     concept: targetNode.concept,
                     fsmState: targetNode.fsmState,
                     difficulty: difficultyMap[targetNode.fsmState] || "medium",
-                    timeLimit: timeLimits[targetNode.fsmState] || 90,
-                    mustHave: nextMH
+                    timeLimit: interview.mode === "Coding" ? 180 : (timeLimits[targetNode.fsmState] || 90),
+                    mustHave: nextQ.must_have,
+                    testCases: nextQ.testCases,
+                    timeConstraint: nextQ.timeConstraint,
+                    spaceConstraint: nextQ.spaceConstraint,
+                    variableConstraints: nextQ.variableConstraints
                 };
 
                 interview.questions.push(newQuestionDoc);

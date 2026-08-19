@@ -12,3 +12,6 @@ public/uploads/
 
 # Test scripts
 test_razorpay.js
+
+# Docker code execution temp files
+temp/

@@ -19,7 +19,7 @@ import { warmupEmbeddingModel } from "./services/embeddingService.js";
 
 const app=express()
 app.use(cors({
-    origin:"https://skilllens-1client.onrender.com",
+    origin: ["https://skilllens-1client.onrender.com", "http://localhost:5173"],
     credentials:true
 }))
 

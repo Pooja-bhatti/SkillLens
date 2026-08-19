@@ -4,7 +4,7 @@ import {
   FaMicrophone, FaStop, FaKeyboard, FaVolumeUp, FaVolumeMute,
   FaHourglassHalf, FaRegCommentDots, FaBrain, FaCheckCircle,
   FaArrowRight, FaCodeBranch, FaSearch, FaHistory,
-  FaChevronRight, FaTerminal
+  FaChevronRight, FaTerminal, FaPlay, FaRobot
 } from 'react-icons/fa';
 import { BsBriefcase, BsMic, BsSliders, BsAward, BsPerson, BsPlusCircle } from 'react-icons/bs';
 import axios from 'axios';
@@ -61,6 +61,13 @@ function Step2Interview({ interviewData, onFinish }) {
   const [isDone, setIsDone]                   = useState(false);
   const [stopReason, setStopReason]           = useState('');
   const [isFinishing, setIsFinishing]         = useState(false);
+  const [isPlayingAnswer, setIsPlayingAnswer] = useState(false);
+
+  // Code execution state (Coding mode — Pyodide in-browser Python)
+  const [isRunningCode, setIsRunningCode]       = useState(false);
+  const [testResults, setTestResults]           = useState(null);
+  const [pyodideLoading, setPyodideLoading]     = useState(false);
+  const pyodideRef = useRef(null);
 
   const recognitionRef = useRef(null);
   const timerRef       = useRef(null);
@@ -74,6 +81,30 @@ function Step2Interview({ interviewData, onFinish }) {
 
   const defaultTimeLimit = isCoding ? 180 : isHR ? 120 : 60;
 
+  const persistentTranscript = useRef('');
+  const pyodideWorkerRef = useRef(null);
+
+  // Initialize Pyodide Web Worker
+  useEffect(() => {
+    if (isCoding) {
+      pyodideWorkerRef.current = new Worker(new URL('../workers/pyodide.worker.js', import.meta.url));
+      pyodideWorkerRef.current.onerror = (error) => {
+        if (error.message && (error.message.includes('Out of memory') || error.message.includes('memory access out of bounds'))) {
+          pyodideWorkerRef.current.terminate();
+          pyodideWorkerRef.current = new Worker(new URL('../workers/pyodide.worker.js', import.meta.url));
+          setIsRunningCode(false);
+          setTestResults({
+            allPassed: false, passedCount: 0, totalTests: 1,
+            results: [{ testCase: 1, status: 'Memory Limit Exceeded', passed: false, stderr: 'Your code used too much RAM (Memory Limit Exceeded).', input: '', expectedOutput: '', actualOutput: '' }]
+          });
+        }
+      };
+    }
+    return () => {
+      if (pyodideWorkerRef.current) pyodideWorkerRef.current.terminate();
+    };
+  }, [isCoding]);
+
   // Web Speech API
   useEffect(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -83,11 +114,19 @@ function Step2Interview({ interviewData, onFinish }) {
       recognition.interimResults = true;
       recognition.lang = 'en-US';
       recognition.onresult = (event) => {
-        let transcript = '';
+        let interim = '';
+        let final = '';
         for (let i = event.resultIndex; i < event.results.length; i++) {
-          transcript += event.results[i][0].transcript;
+          if (event.results[i].isFinal) {
+            final += event.results[i][0].transcript;
+          } else {
+            interim += event.results[i][0].transcript;
+          }
         }
-        setInputText(transcript);
+        if (final) {
+          persistentTranscript.current += final + ' ';
+        }
+        setInputText((persistentTranscript.current + interim).trim());
       };
       recognition.onerror = () => setIsRecording(false);
       recognition.onend   = () => setIsRecording(false);
@@ -106,7 +145,17 @@ function Step2Interview({ interviewData, onFinish }) {
       setInputText('');
       setAiFeedback(null);
       setSemanticScore(null);
+      setTestResults(null);
       if (!isMuted && !isCoding) speak(currentQuestion.question);
+      
+      // Determine if it's a conceptual follow-up (Coding mode, but no test cases)
+      const isConceptual = mode === 'Coding' && (!currentQuestion.testCases || currentQuestion.testCases.length === 0);
+      if (isConceptual) {
+         setInputMode('voice');
+         if (!isMuted) speak(currentQuestion.question);
+      } else if (mode === 'Coding') {
+         setInputMode('text');
+      }
     }
   }, [currentIdx]);
 
@@ -154,6 +203,26 @@ function Step2Interview({ interviewData, onFinish }) {
     }
   };
 
+  // Play back the user's recorded answer via TTS
+  const playMyAnswer = () => {
+    if (!inputText.trim()) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(inputText);
+    utterance.rate = 0.95;
+    utterance.onstart = () => setIsPlayingAnswer(true);
+    utterance.onend   = () => setIsPlayingAnswer(false);
+    utterance.onerror = () => setIsPlayingAnswer(false);
+    const voices = window.speechSynthesis.getVoices();
+    const voice  = voices.find(v => v.lang.startsWith('en')) || voices[0];
+    if (voice) utterance.voice = voice;
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const stopPlayback = () => {
+    window.speechSynthesis.cancel();
+    setIsPlayingAnswer(false);
+  };
+
   const startSpeechRecording = () => {
     if (!recognitionRef.current) { 
       alert('Speech recognition is not supported in this browser. Please use keyboard entry.'); 
@@ -162,6 +231,9 @@ function Step2Interview({ interviewData, onFinish }) {
     window.speechSynthesis.cancel();
     setIsInterviewerSpeaking(false);
     try { 
+      // Reset persistent transcript for new recording
+      persistentTranscript.current = '';
+      setInputText('');
       recognitionRef.current.start(); 
       setIsRecording(true); 
     } catch {}
@@ -180,9 +252,49 @@ function Step2Interview({ interviewData, onFinish }) {
     const timeTaken = limit - timeLeft;
 
     try {
+      // For Coding mode: auto-run code if user hasn't clicked "Run Code" yet
+      let codingTestResults = testResults;
+      const isConceptualFollowUp = isCoding && (!currentQuestion.testCases || currentQuestion.testCases.length === 0);
+
+      if (isCoding && !isConceptualFollowUp && !codingTestResults && inputTextRef.current.trim()) {
+        const testCases = currentQuestion.testCases || [];
+        if (testCases.length > 0 && pyodideWorkerRef.current) {
+          codingTestResults = await new Promise((resolve) => {
+            const runId = "auto-run";
+            const tleTimeout = setTimeout(() => {
+                pyodideWorkerRef.current.terminate();
+                pyodideWorkerRef.current = new Worker(new URL('../workers/pyodide.worker.js', import.meta.url));
+                resolve({ allPassed: false, passedCount: 0, totalTests: testCases.length, results: [] });
+            }, 3000);
+            
+            const msgHandler = (e) => {
+                if (e.data.id === runId) {
+                    clearTimeout(tleTimeout);
+                    pyodideWorkerRef.current.removeEventListener('message', msgHandler);
+                    resolve(e.data.success ? e.data.testResults : { allPassed: false, passedCount: 0, totalTests: testCases.length, results: [] });
+                }
+            };
+            pyodideWorkerRef.current.addEventListener('message', msgHandler);
+            pyodideWorkerRef.current.postMessage({ id: runId, code: inputTextRef.current, testCases });
+          });
+          setTestResults(codingTestResults);
+        }
+      }
+
+      const payload = {
+        interviewId,
+        questionIndex: currentIdx,
+        answer: inputTextRef.current.trim(),
+        timeTaken,
+      };
+      // Attach test results for Coding mode so backend can score by passed/total
+      if (isCoding && codingTestResults) {
+        payload.testResults = codingTestResults;
+      }
+
       const response = await axios.post(
         `${ServerUrl}/api/interview/submit-answer`,
-        { interviewId, questionIndex: currentIdx, answer: inputTextRef.current.trim(), timeTaken },
+        payload,
         { withCredentials: true }
       );
 
@@ -204,6 +316,56 @@ function Step2Interview({ interviewData, onFinish }) {
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  // Code execution handler (Coding mode — runs Python in Web Worker)
+  const handleRunCode = async () => {
+    if (!inputText.trim() || !pyodideWorkerRef.current) return;
+    setIsRunningCode(true);
+    setTestResults(null);
+    
+    const testCases = currentQuestion.testCases || [];
+    if (testCases.length === 0) {
+      setIsRunningCode(false);
+      return;
+    }
+
+    const runId = Math.random().toString(36).substr(2, 9);
+    const timeLimitMs = currentQuestion.timeConstraint || 2000;
+
+    // Time Limit Exceeded protection
+    const tleTimeout = setTimeout(() => {
+        pyodideWorkerRef.current.terminate();
+        pyodideWorkerRef.current = new Worker(new URL('../workers/pyodide.worker.js', import.meta.url));
+        setIsRunningCode(false);
+        setTestResults({
+            allPassed: false, passedCount: 0, totalTests: testCases.length,
+            results: [{ testCase: 1, status: 'Time Limit Exceeded', passed: false, stderr: `Code execution exceeded ${timeLimitMs}ms.`, input: '', expectedOutput: '', actualOutput: '' }]
+        });
+    }, timeLimitMs + 500); // Small buffer for worker serialization overhead
+
+    const messageHandler = (event) => {
+        if (event.data.id === runId) {
+            clearTimeout(tleTimeout);
+            pyodideWorkerRef.current.removeEventListener('message', messageHandler);
+            setIsRunningCode(false);
+            if (event.data.success) {
+                setTestResults(event.data.testResults);
+            } else {
+                setTestResults({
+                    allPassed: false, passedCount: 0, totalTests: 1,
+                    results: [{ testCase: 1, status: 'Runtime Error', passed: false, stderr: event.data.error, input: '', expectedOutput: '', actualOutput: '' }]
+                });
+            }
+        }
+    };
+
+    pyodideWorkerRef.current.addEventListener('message', messageHandler);
+    pyodideWorkerRef.current.postMessage({
+        id: runId,
+        code: inputText,
+        testCases
+    });
   };
 
   const handleNext = () => {
@@ -389,60 +551,219 @@ function Step2Interview({ interviewData, onFinish }) {
               </h2>
             </div>
             
-            {/* Hourglass/Timer */}
-            <div className="flex items-center gap-2 bg-bg-secondary border border-border-main px-4 py-1.5 rounded-xl shadow-sm">
-              <FaHourglassHalf className={timeLeft < 15 ? 'text-brand-error animate-spin' : 'text-text-secondary'} size={14} />
-              <span className={`font-mono text-sm font-black ${timeLeft < 15 ? 'text-brand-error animate-pulse' : 'text-text-primary'}`}>
-                {timeLeft}s
-              </span>
+            <div className="flex items-center gap-4">
+              {/* End Interview Early Button */}
+              {!isDone && (
+                <button 
+                  onClick={() => {
+                     if(window.confirm('Are you sure you want to end the interview early?')) {
+                        finishInterview();
+                     }
+                  }}
+                  className="bg-brand-error/10 text-brand-error border border-brand-error/20 px-3 py-1.5 rounded-lg text-[10px] font-bold hover:bg-brand-error hover:text-white transition cursor-pointer"
+                >
+                  End Interview Early
+                </button>
+              )}
+            
+              {/* Hourglass/Timer */}
+              <div className="flex items-center gap-2 bg-bg-secondary border border-border-main px-4 py-1.5 rounded-xl shadow-sm">
+                <FaHourglassHalf className={timeLeft < 15 ? 'text-brand-error animate-spin' : 'text-text-secondary'} size={14} />
+                <span className={`font-mono text-sm font-black ${timeLeft < 15 ? 'text-brand-error animate-pulse' : 'text-text-primary'}`}>
+                  {timeLeft}s
+                </span>
+              </div>
             </div>
           </div>
 
           {/* Prompt / Question Arena */}
           <div className="my-8 flex-1 flex flex-col justify-center space-y-6">
-            <div className="flex gap-2 mb-2">
+            <div className="flex flex-wrap gap-2 mb-2">
               <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border uppercase tracking-wider ${getDifficultyStyle(currentQuestion.difficulty || DIFFICULTY_LABELS[currentQuestion.fsmState] || 'Easy')}`}>
                 {currentQuestion.difficulty || DIFFICULTY_LABELS[currentQuestion.fsmState] || 'Easy'}
               </span>
               <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold border bg-bg-secondary text-text-secondary border-border-main uppercase tracking-wider">
                 {currentQuestion.concept}
               </span>
+              {/* Conceptual Follow-Up Agent Indicator */}
+              {isCoding && currentQuestion.testCases && currentQuestion.testCases.length === 0 && (
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold border bg-secondary-accent/15 text-secondary-accent border-secondary-accent/25 uppercase tracking-wider flex items-center gap-1">
+                  <FaRobot size={10} /> Follow-Up Agent
+                </span>
+              )}
             </div>
 
             <h1 className="text-xl font-extrabold text-text-primary leading-snug">
               "{currentQuestion.question}"
             </h1>
 
+            {/* Variable Constraints (Coding mode) */}
+            {isCoding && currentQuestion.variableConstraints && currentQuestion.variableConstraints.length > 0 && (
+              <div className="bg-bg-secondary border border-border-main rounded-xl p-4 space-y-2">
+                <p className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Constraints</p>
+                <div className="space-y-1">
+                  {currentQuestion.variableConstraints.map((vc, idx) => (
+                    <p key={idx} className="text-xs text-text-primary font-mono">• {vc}</p>
+                  ))}
+                </div>
+                <div className="flex gap-4 pt-1 border-t border-border-main/50 mt-2">
+                  {currentQuestion.timeConstraint && (
+                    <span className="text-[10px] text-text-secondary font-mono">
+                      ⏱ Time Limit: <span className="text-primary-accent font-bold">{currentQuestion.timeConstraint}ms</span>
+                    </span>
+                  )}
+                  {currentQuestion.spaceConstraint && (
+                    <span className="text-[10px] text-text-secondary font-mono">
+                      💾 Memory: <span className="text-secondary-accent font-bold">{currentQuestion.spaceConstraint}MB</span>
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Sample Test Case (shows first test so user knows the format) */}
+            {isCoding && currentQuestion.testCases && currentQuestion.testCases.length > 0 && (
+              <div className="bg-bg-secondary border border-border-main rounded-xl p-4 space-y-2">
+                <p className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">📋 Sample Test Case (Input Format)</p>
+                <div className="grid grid-cols-2 gap-3 text-[10px] font-mono">
+                  <div>
+                    <p className="text-text-secondary mb-1 font-bold">Input (via stdin):</p>
+                    <pre className="text-text-primary bg-[#2B2A28] rounded-lg px-3 py-2 whitespace-pre-wrap break-all max-h-[60px] overflow-y-auto border border-border-main/50">
+{currentQuestion.testCases[0].input || '(empty)'}
+                    </pre>
+                  </div>
+                  <div>
+                    <p className="text-text-secondary mb-1 font-bold">Expected Output (via stdout):</p>
+                    <pre className="text-brand-success bg-[#2B2A28] rounded-lg px-3 py-2 whitespace-pre-wrap break-all max-h-[60px] overflow-y-auto border border-border-main/50">
+{currentQuestion.testCases[0].expectedOutput || '(empty)'}
+                    </pre>
+                  </div>
+                </div>
+                <p className="text-[9px] text-text-secondary italic">💡 Tip: Use <code className="bg-[#2B2A28] px-1 py-0.5 rounded text-primary-accent">json.loads(input())</code> or <code className="bg-[#2B2A28] px-1 py-0.5 rounded text-primary-accent">ast.literal_eval(input())</code> to parse list/dict inputs. <code className="bg-[#2B2A28] px-1 py-0.5 rounded text-primary-accent">import json, ast</code> is pre-loaded.</p>
+              </div>
+            )}
+
             {/* Answer Interface */}
             {!aiFeedback && (
               <div className="space-y-4">
                 
                 {/* 💻 CODING INTERACTION PANE */}
-                {isCoding && (
-                  <div className="rounded-xl overflow-hidden border border-border-main shadow-sm">
-                    <div className="bg-bg-secondary px-4 py-2 border-b border-border-main flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className="w-2.5 h-2.5 rounded-full bg-brand-error/60" />
-                        <span className="w-2.5 h-2.5 rounded-full bg-brand-warning/60" />
-                        <span className="w-2.5 h-2.5 rounded-full bg-brand-success/60" />
-                        <span className="ml-1 text-[10px] text-text-secondary font-mono">pseudocode.py</span>
+                {isCoding && (!currentQuestion.testCases || currentQuestion.testCases.length > 0) && (
+                  <div className="space-y-3">
+                    {/* Code Editor */}
+                    <div className="rounded-xl overflow-hidden border border-border-main shadow-sm">
+                      <div className="bg-bg-secondary px-4 py-2 border-b border-border-main flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2.5 h-2.5 rounded-full bg-brand-error/60" />
+                          <span className="w-2.5 h-2.5 rounded-full bg-brand-warning/60" />
+                          <span className="w-2.5 h-2.5 rounded-full bg-brand-success/60" />
+                          <span className="ml-2 bg-card-main border border-border-main text-text-primary text-[10px] font-mono font-bold px-2 py-0.5 rounded-lg">
+                            🐍 Python 3
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={handleRunCode}
+                            disabled={isRunningCode || !inputText.trim()}
+                            className="flex items-center gap-1.5 bg-brand-success text-white px-3 py-1 rounded-lg text-[10px] font-bold hover:opacity-90 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {isRunningCode ? (
+                              <><span className="w-3 h-3 border-2 border-t-transparent border-white rounded-full animate-spin" /> {pyodideLoading ? 'Loading Python...' : 'Running...'}</>
+                            ) : (
+                              <><FaTerminal size={10} /> Run Code</>
+                            )}
+                          </button>
+                          <span className="text-[9px] text-text-secondary font-bold uppercase tracking-wider flex items-center gap-1">
+                            <FaTerminal /> Code Editor
+                          </span>
+                        </div>
                       </div>
-                      <span className="text-[9px] text-text-secondary font-bold uppercase tracking-wider flex items-center gap-1">
-                        <FaTerminal /> Input Console
-                      </span>
+                      <textarea
+                        rows={10}
+                        value={inputText}
+                        onChange={(e) => setInputText(e.target.value)}
+                        placeholder={"# Read from stdin, write to stdout\nimport sys\ndata = sys.stdin.read().strip()\n# Your solution here\nprint(result)"}
+                        className="w-full p-4 bg-[#2B2A28] text-[#FAF8F5] caret-primary-accent font-mono text-xs outline-none resize-none placeholder-text-secondary/50 leading-relaxed"
+                        spellCheck={false}
+                      />
                     </div>
-                    <textarea
-                      rows={7}
-                      value={inputText}
-                      onChange={(e) => setInputText(e.target.value)}
-                      placeholder={"# Explain approach and complexity here:\n# 1. Algorithm choice\n# 2. Time/Space limits\n# 3. Code pseudocode..."}
-                      className="w-full p-4 bg-[#2B2A28] text-[#FAF8F5] caret-primary-accent font-mono text-xs outline-none resize-none placeholder-text-secondary/50 leading-relaxed"
-                    />
+
+                    {/* Test Results Console */}
+                    {(testResults || isRunningCode) && (
+                      <div className="rounded-xl overflow-hidden border border-border-main shadow-sm">
+                        <div className="bg-bg-secondary px-4 py-2 border-b border-border-main flex items-center justify-between">
+                          <span className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Test Results</span>
+                          {testResults && (
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                              testResults.allPassed
+                                ? 'bg-brand-success/15 border-brand-success/20 text-brand-success'
+                                : 'bg-brand-error/15 border-brand-error/20 text-brand-error'
+                            }`}>
+                              {testResults.passedCount}/{testResults.totalTests} Passed
+                            </span>
+                          )}
+                        </div>
+                        <div className="bg-[#2B2A28] p-4 max-h-[350px] overflow-y-auto space-y-3">
+                          {isRunningCode && !testResults && (
+                            <div className="flex items-center gap-2 text-text-secondary text-xs font-mono">
+                              <span className="w-3 h-3 border-2 border-t-transparent border-secondary-accent rounded-full animate-spin" />
+                              Compiling and executing against test cases...
+                            </div>
+                          )}
+                          {testResults?.results?.map((tr, idx) => (
+                            <div key={idx} className={`border rounded-lg p-3 space-y-1.5 ${
+                              tr.passed
+                                ? 'border-brand-success/30 bg-brand-success/5'
+                                : 'border-brand-error/30 bg-brand-error/5'
+                            }`}>
+                              <div className="flex items-center justify-between">
+                                <span className="text-[10px] font-bold text-[#FAF8F5] font-mono">
+                                  Test Case {tr.testCase}
+                                </span>
+                                <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
+                                  tr.passed
+                                    ? 'bg-brand-success/20 text-brand-success'
+                                    : 'bg-brand-error/20 text-brand-error'
+                                }`}>
+                                  {tr.status}
+                                </span>
+                              </div>
+                              <div className="grid grid-cols-3 gap-2 text-[10px] font-mono">
+                                <div>
+                                  <p className="text-text-secondary mb-0.5">Input</p>
+                                  <pre className="text-[#FAF8F5] bg-[#1E1D1B] rounded px-2 py-1 whitespace-pre-wrap break-all max-h-[80px] overflow-y-auto">{tr.input || '(empty)'}</pre>
+                                </div>
+                                <div>
+                                  <p className="text-text-secondary mb-0.5">Expected</p>
+                                  <pre className="text-[#FAF8F5] bg-[#1E1D1B] rounded px-2 py-1 whitespace-pre-wrap break-all max-h-[80px] overflow-y-auto">{tr.expectedOutput}</pre>
+                                </div>
+                                <div>
+                                  <p className="text-text-secondary mb-0.5">Your Output</p>
+                                  <pre className={`bg-[#1E1D1B] rounded px-2 py-1 whitespace-pre-wrap break-all max-h-[80px] overflow-y-auto ${tr.passed ? 'text-brand-success' : 'text-brand-error'}`}>
+                                    {tr.actualOutput || '(no output)'}
+                                  </pre>
+                                </div>
+                              </div>
+                              {tr.stderr && (
+                                <div className="text-[10px] font-mono text-brand-error bg-brand-error/10 rounded px-2 py-1 mt-1 whitespace-pre-wrap break-all">
+                                  {tr.stderr}
+                                </div>
+                              )}
+                              {tr.time && (
+                                <p className="text-[9px] text-text-secondary font-mono">
+                                  Runtime: {tr.time}s · Memory: {tr.memory ? `${tr.memory} KB` : 'N/A'}
+                                </p>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 
-                {/* 🎤🤝 TECHNICAL + HR PANE */}
-                {!isCoding && (
+                {/* 🎤🤝 TECHNICAL + HR + CONCEPTUAL FOLLOW UP PANE */}
+                {(!isCoding || (isCoding && currentQuestion.testCases && currentQuestion.testCases.length === 0)) && (
                   <div className="space-y-4">
                     <div className="flex bg-bg-secondary p-1 rounded-xl w-fit border border-border-main">
                       <button 
@@ -470,9 +791,14 @@ function Step2Interview({ interviewData, onFinish }) {
                     {inputMode === 'voice' ? (
                       <div className="flex flex-col items-center justify-center bg-bg-secondary border border-dashed border-border-main rounded-xl p-6 min-h-[140px]">
                         {inputText ? (
-                          <p className="text-text-primary text-xs leading-relaxed text-center italic max-w-lg mb-4">
-                            "{inputText}"
-                          </p>
+                          <div className="w-full max-w-lg mb-4">
+                            <p className="text-[10px] font-bold text-text-secondary uppercase tracking-wider mb-2">Your Recorded Answer:</p>
+                            <div className="max-h-[120px] overflow-y-auto bg-bg-main border border-border-main rounded-lg p-3">
+                              <p className="text-text-primary text-xs leading-relaxed italic">
+                                "{inputText}"
+                              </p>
+                            </div>
+                          </div>
                         ) : (
                           <p className="text-text-secondary text-xs text-center mb-5">
                             {isRecording 
@@ -483,35 +809,68 @@ function Step2Interview({ interviewData, onFinish }) {
                           </p>
                         )}
 
-                        <div className="flex items-center gap-3">
-                          {!isRecording ? (
+                        <div className="flex flex-col items-center gap-3 w-full">
+                          <div className="flex items-center gap-2 flex-wrap justify-center">
+                            {!isRecording ? (
+                              <button 
+                                onClick={startSpeechRecording} 
+                                className={`flex items-center gap-2 px-5 py-2 rounded-xl text-xs font-bold shadow-sm hover:opacity-95 transition cursor-pointer ${
+                                  inputText 
+                                    ? 'bg-bg-main text-text-primary border border-border-main' 
+                                    : 'bg-primary-accent text-white'
+                                }`}
+                              >
+                                <FaMicrophone /> {inputText ? 'Re-record Answer' : 'Start Recording'}
+                              </button>
+                            ) : (
+                              <button 
+                                onClick={stopSpeechRecording} 
+                                className="flex items-center gap-2 bg-brand-error text-white px-5 py-2 rounded-xl text-xs font-bold shadow-sm hover:opacity-95 transition cursor-pointer"
+                              >
+                                <FaStop /> Stop Recording
+                              </button>
+                            )}
+                            {/* Hear My Answer / Stop Playback button */}
+                            {!isRecording && inputText && (
+                              <button 
+                                onClick={isPlayingAnswer ? stopPlayback : playMyAnswer}
+                                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold shadow-sm hover:opacity-95 transition cursor-pointer border ${
+                                  isPlayingAnswer 
+                                    ? 'bg-secondary-accent/15 text-secondary-accent border-secondary-accent/25'
+                                    : 'bg-card-main text-text-secondary border-border-main hover:text-text-primary'
+                                }`}
+                              >
+                                {isPlayingAnswer ? <><FaStop size={10} /> Stop Playback</> : <><FaPlay size={10} /> Hear My Answer</>}
+                              </button>
+                            )}
                             <button 
-                              onClick={startSpeechRecording} 
-                              className="flex items-center gap-2 bg-primary-accent text-white px-5 py-2 rounded-xl text-xs font-bold shadow-sm hover:opacity-95 transition cursor-pointer"
+                              onClick={toggleMute} 
+                              title="Repeat the question"
+                              className="p-2 bg-card-main border border-border-main text-text-secondary rounded-xl hover:bg-bg-secondary cursor-pointer"
                             >
-                              <FaMicrophone /> Start Recording
+                              {isMuted ? <FaVolumeMute /> : <FaVolumeUp />}
                             </button>
-                          ) : (
+                          </div>
+                          
+                          {/* Dedicated Submit button if there is text already */}
+                          {!isRecording && inputText && !isPlayingAnswer && (
                             <button 
-                              onClick={stopSpeechRecording} 
-                              className="flex items-center gap-2 bg-brand-error text-white px-5 py-2 rounded-xl text-xs font-bold shadow-sm hover:opacity-95 transition cursor-pointer"
+                              onClick={handleSubmitAnswer}
+                              className="mt-2 bg-primary-accent text-white px-8 py-2 rounded-xl text-xs font-bold shadow-sm hover:opacity-95 transition cursor-pointer"
                             >
-                              <FaStop /> Stop Recording
+                              Submit Voice Answer
                             </button>
                           )}
-                          <button 
-                            onClick={toggleMute} 
-                            className="p-2 bg-card-main border border-border-main text-text-secondary rounded-xl hover:bg-bg-secondary cursor-pointer"
-                          >
-                            {isMuted ? <FaVolumeMute /> : <FaVolumeUp />}
-                          </button>
                         </div>
                       </div>
                     ) : (
                       <textarea
                         rows={5}
                         value={inputText}
-                        onChange={(e) => setInputText(e.target.value)}
+                        onChange={(e) => {
+                          setInputText(e.target.value);
+                          persistentTranscript.current = e.target.value;
+                        }}
                         placeholder={isHR ? 'Describe the Situation, Task, Action you took, and final Result...' : 'Type response details...'}
                         className="w-full p-4 border border-border-main rounded-xl focus:ring-1 focus:ring-primary-accent focus:border-primary-accent outline-none bg-bg-main text-text-primary text-xs placeholder-text-secondary/50 transition resize-none leading-relaxed"
                       />
@@ -595,27 +954,29 @@ function Step2Interview({ interviewData, onFinish }) {
               </div>
             </div>
 
-            {/* FSM Graph graphic */}
-            <div className="space-y-2.5">
-              <h3 className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">FSM Node Pipeline</h3>
-              <div className="grid grid-cols-4 gap-1.5 text-center">
-                {FSM_ORDER.map((fsmState) => {
-                  const isActive = currentQuestion.fsmState === fsmState;
-                  return (
-                    <div 
-                      key={fsmState} 
-                      className={`py-2 rounded-lg border text-[8px] font-bold transition-all duration-300 ${
-                        isActive 
-                          ? 'bg-primary-accent text-white border-primary-accent ring-2 ring-primary-accent/15 scale-105' 
-                          : 'bg-bg-secondary text-text-secondary border-border-main/70'
-                      }`}
-                    >
-                      {fsmState}
-                    </div>
-                  )
-                })}
+            {/* FSM Graph graphic (Hidden in Coding mode as we use linear Easy/Med/Hard) */}
+            {!isCoding && (
+              <div className="space-y-2.5">
+                <h3 className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">FSM Node Pipeline</h3>
+                <div className="grid grid-cols-4 gap-1.5 text-center">
+                  {FSM_ORDER.map((fsmState) => {
+                    const isActive = currentQuestion.fsmState === fsmState;
+                    return (
+                      <div 
+                        key={fsmState} 
+                        className={`py-2 rounded-lg border text-[8px] font-bold transition-all duration-300 ${
+                          isActive 
+                            ? 'bg-primary-accent text-white border-primary-accent ring-2 ring-primary-accent/15 scale-105' 
+                            : 'bg-bg-secondary text-text-secondary border-border-main/70'
+                        }`}
+                      >
+                        {fsmState}
+                      </div>
+                    )
+                  })}
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Topic mastery meters */}
             <div className="space-y-3">
